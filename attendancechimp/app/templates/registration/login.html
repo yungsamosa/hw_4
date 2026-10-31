@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Log In - AttendanceChimp</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 3em 1em;
+        }
+        .container {
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        .field {
+            margin-bottom: 1em;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.25em;
+        }
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 0.4em;
+            box-sizing: border-box;
+        }
+        .error {
+            color: #b00020;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Log In</h1>
+
+        {% if form.errors %}
+            <p class="error">Your username and password didn't match. Please try again.</p>
+        {% endif %}
+
+        <form action="{% url 'login' %}" method="post">
+            {% csrf_token %}
+
+            <div class="field">
+                <label for="id_username">User name</label>
+                <input type="text" id="id_username" name="username" required autofocus>
+            </div>
+
+            <div class="field">
+                <label for="id_password">Password</label>
+                <input type="password" id="id_password" name="password" required>
+            </div>
+
+            <input type="hidden" name="next" value="{{ next }}">
+            <button type="submit">Log In</button>
+        </form>
+
+        <p>No account yet? <a href="/app/new">Sign up</a>.</p>
+    </div>
+</body>
+</html>

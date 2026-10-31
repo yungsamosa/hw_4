@@ -60,5 +60,9 @@ TIME_ZONE = "America/Chicago"
 USE_I18N = True
 USE_TZ = True
 
+# Where django.contrib.auth sends users after login/logout.
+LOGIN_REDIRECT_URL = "/app/"
+LOGOUT_REDIRECT_URL = "/app/"
+
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

@@ -35,6 +35,20 @@
         </p>
 
         <p>Current time (CST): {{ current_time }}</p>
+
+        <hr>
+
+        <p>
+            {% if is_logged_in %}
+                <a href="/app/new_course">New course</a> &middot;
+                <a href="/app/new_lecture">New lecture</a> &middot;
+                <a href="/app/new_qr_upload">Upload QR code</a> &middot;
+                <a href="/app/dumpUploads">Dump uploads (JSON)</a>
+            {% else %}
+                <a href="/accounts/login/">Log in</a> &middot;
+                <a href="/app/new">Sign up</a>
+            {% endif %}
+        </p>
     </div>
 </body>
 </html>

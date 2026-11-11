@@ -7,12 +7,20 @@ from zoneinfo import ZoneInfo
 from django.contrib.auth import login
 from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import InstructorProfile, StudentProfile
+from django.utils import timezone
+
+from .models import (
+    Course,
+    InstructorProfile,
+    Lecture,
+    QRCodeUpload,
+    StudentProfile,
+)
 
 CDT = ZoneInfo("America/Chicago")
 
@@ -123,3 +131,257 @@ def sum_view(request: HttpRequest) -> HttpResponse:
         return HttpResponse("Bad Request: n1 and n2 must be numbers", status=400, content_type="text/plain")
 
     return HttpResponse(_decimal_to_str(val), content_type="text/plain")
+
+
+# ===========================================================================
+# HW5 — course / lecture / upload endpoints
+# ===========================================================================
+#
+# Authorization summary:
+#
+#   /app/createCourse        POST   instructor   else 401
+#   /app/createLecture       POST   instructor   else 401
+#   /app/createQRCodeUpload  POST   student      else 401
+#   /app/dumpUploads         GET    instructor   else 401
+#
+# Every endpoint checks the role *before* the HTTP method, so an
+# unauthorized caller always sees 401 rather than 405.
+
+
+def _is_instructor(user) -> bool:
+    """True when `user` is signed in and has an InstructorProfile."""
+    return bool(
+        user
+        and user.is_authenticated
+        and InstructorProfile.objects.filter(user=user).exists()
+    )
+
+
+def _is_student(user) -> bool:
+    """True when `user` is signed in and has a StudentProfile."""
+    return bool(
+        user
+        and user.is_authenticated
+        and StudentProfile.objects.filter(user=user).exists()
+    )
+
+
+def _unauthorized(message: str) -> HttpResponse:
+    return HttpResponse(message, status=401, content_type="text/plain")
+
+
+def _wrong_method(allowed: str) -> HttpResponse:
+    response = HttpResponse(
+        f"Method Not Allowed: use {allowed}", status=405, content_type="text/plain"
+    )
+    response["Allow"] = allowed
+    return response
+
+
+_TIME_FORMATS = ("%H:%M", "%H:%M:%S", "%I:%M %p", "%I:%M%p", "%H%M")
+
+
+def _parse_time(raw: str):
+    """Parse an HTML <input type="time"> value.  Returns None if unparseable.
+
+    Returning None keeps the view off the 500 path: Course.start_time and
+    Course.end_time are both nullable.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    for fmt in _TIME_FORMATS:
+        try:
+            return datetime.strptime(raw.upper(), fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
+# An unchecked checkbox is simply absent from the POST body, so the presence
+# of the key is what marks the day as selected.  Explicit negatives are still
+# honoured in case the caller is curl rather than a browser.
+_DAY_FALSEY = {"0", "false", "off", "no", "none"}
+
+
+def _day_checked(request: HttpRequest, field: str) -> bool:
+    if field not in request.POST:
+        return False
+    return str(request.POST.get(field, "")).strip().lower() not in _DAY_FALSEY
+
+
+# ---------------------------------------------------------------------------
+# Form pages
+# ---------------------------------------------------------------------------
+
+
+def new_course(request: HttpRequest) -> HttpResponse:
+    """Render the 'create a course' form."""
+    return render(request, "app/new_course.html")
+
+
+def new_lecture(request: HttpRequest) -> HttpResponse:
+    """Render the 'create a lecture' form, with a course picker."""
+    if _is_instructor(request.user):
+        courses = Course.objects.filter(instructor=request.user).order_by("name")
+    else:
+        courses = Course.objects.none()
+    return render(request, "app/new_lecture.html", {"courses": courses})
+
+
+def new_qr_upload(request: HttpRequest) -> HttpResponse:
+    """Render the 'upload a QR-code photo' form."""
+    return render(request, "app/new_qr_upload.html")
+
+
+# ---------------------------------------------------------------------------
+# /app/createCourse  —  POST, instructor only
+# ---------------------------------------------------------------------------
+
+
+@csrf_exempt
+def createCourse(request: HttpRequest) -> HttpResponse:
+    """Create a Course from POST data.  Instructors only."""
+    if not _is_instructor(request.user):
+        return _unauthorized("Unauthorized: you must be logged in as an instructor")
+
+    if request.method != "POST":
+        return _wrong_method("POST")
+
+    name = (request.POST.get("course-name") or "").strip()
+    if not name:
+        return HttpResponse(
+            "Bad Request: course-name is required",
+            status=400,
+            content_type="text/plain",
+        )
+
+    fields = {
+        "instructor": request.user,
+        "start_time": _parse_time(request.POST.get("start-time", "")),
+        "end_time": _parse_time(request.POST.get("end-time", "")),
+        "day_mon": _day_checked(request, "day-mon"),
+        "day_tue": _day_checked(request, "day-tue"),
+        "day_wed": _day_checked(request, "day-wed"),
+        "day_thu": _day_checked(request, "day-thu"),
+        "day_fri": _day_checked(request, "day-fri"),
+    }
+
+    # Course.name is unique.  Re-posting the same name updates the existing
+    # row instead of raising IntegrityError, so a repeated request is a 200
+    # rather than a 500.
+    course, created = Course.objects.update_or_create(name=name, defaults=fields)
+
+    verb = "Created" if created else "Updated"
+    return HttpResponse(
+        f"{verb} course {course.name}", status=200, content_type="text/plain"
+    )
+
+
+# ---------------------------------------------------------------------------
+# /app/createLecture  —  POST, instructor only
+# ---------------------------------------------------------------------------
+
+
+@csrf_exempt
+def createLecture(request: HttpRequest) -> HttpResponse:
+    """Create a Lecture for the course named in POST field `choice`."""
+    if not _is_instructor(request.user):
+        return _unauthorized("Unauthorized: you must be logged in as an instructor")
+
+    if request.method != "POST":
+        return _wrong_method("POST")
+
+    choice = (request.POST.get("choice") or "").strip()
+    if not choice:
+        return HttpResponse(
+            "Bad Request: choice (a course name) is required",
+            status=400,
+            content_type="text/plain",
+        )
+
+    # Course names are unique, so the name identifies the course outright.
+    # Prefer one of the caller's own courses if a stale duplicate ever exists.
+    course = (
+        Course.objects.filter(name=choice, instructor=request.user).first()
+        or Course.objects.filter(name=choice).first()
+    )
+    if course is None:
+        return HttpResponse(
+            f"Bad Request: no course named {choice}",
+            status=400,
+            content_type="text/plain",
+        )
+
+    lecture = Lecture.objects.create(course=course)
+
+    return HttpResponse(
+        f"Created lecture {lecture.pk} for course {course.name}",
+        status=200,
+        content_type="text/plain",
+    )
+
+
+# ---------------------------------------------------------------------------
+# /app/createQRCodeUpload  —  POST, student only
+# ---------------------------------------------------------------------------
+
+
+@csrf_exempt
+def createQRCodeUpload(request: HttpRequest) -> HttpResponse:
+    """Record a student's uploaded QR-code photograph.
+
+    The student is the logged-in user and the upload time comes from
+    QRCodeUpload.uploaded_at (auto_now_add), so the body only has to carry
+    the file itself in the `imageUpload` field.
+    """
+    if not _is_student(request.user):
+        return _unauthorized("Unauthorized: you must be logged in as a student")
+
+    if request.method != "POST":
+        return _wrong_method("POST")
+
+    # The row is recorded even when no file came through, so that an upload
+    # attempt always shows up in /app/dumpUploads.
+    upload = QRCodeUpload.objects.create(
+        student=request.user,
+        image=request.FILES.get("imageUpload"),
+    )
+
+    return HttpResponse(
+        f"Recorded upload {upload.pk} for {request.user.username}",
+        status=200,
+        content_type="text/plain",
+    )
+
+
+# ---------------------------------------------------------------------------
+# /app/dumpUploads  —  GET, instructor only
+# ---------------------------------------------------------------------------
+
+
+def dumpUploads(request: HttpRequest) -> HttpResponse:
+    """Return every QR-code upload as JSON: [{username, upload_time}, ...]."""
+    if not _is_instructor(request.user):
+        return _unauthorized("Unauthorized: you must be logged in as an instructor")
+
+    if request.method != "GET":
+        return _wrong_method("GET")
+
+    data = []
+    uploads = (
+        QRCodeUpload.objects.select_related("student")
+        .order_by("uploaded_at", "pk")
+    )
+    for upload in uploads:
+        stamp = upload.uploaded_at
+        if stamp is not None and timezone.is_aware(stamp):
+            stamp = timezone.localtime(stamp)
+        data.append(
+            {
+                "username": upload.student.username,
+                "upload_time": stamp.strftime("%Y-%m-%d %H:%M:%S") if stamp else "",
+            }
+        )
+
+    return JsonResponse(data, safe=False)

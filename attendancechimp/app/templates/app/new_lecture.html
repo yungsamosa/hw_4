@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>New Lecture - AttendanceChimp</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 3em 1em;
+        }
+        .container {
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        .field {
+            margin-bottom: 1em;
+            text-align: left;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.25em;
+        }
+        select,
+        input[type="text"] {
+            width: 100%;
+            padding: 0.4em;
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>New Lecture</h1>
+
+        <form action="/app/createLecture" method="post">
+            {% csrf_token %}
+
+            <div class="field">
+                <label for="choice">Course</label>
+                {% if courses %}
+                    <select id="choice" name="choice" required>
+                        {% for course in courses %}
+                            <option value="{{ course.name }}">{{ course.name }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="text" id="choice" name="choice"
+                           placeholder="Course name" required>
+                {% endif %}
+            </div>
+
+            <button type="submit">Create Lecture</button>
+        </form>
+
+        <p><a href="/app/new_course">Create a course first</a></p>
+        <p><a href="/app/">Back to home</a></p>
+    </div>
+</body>
+</html>

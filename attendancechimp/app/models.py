@@ -117,7 +117,10 @@ class QRCodeUpload(models.Model):
     lecture = models.ForeignKey(Lecture, on_delete=models.SET_NULL,
                                 null=True, blank=True,
                                 related_name='uploads')
-    image = models.ImageField(upload_to='qr_uploads/', null=True, blank=True)
+    # FileField rather than ImageField: ImageField makes Pillow a hard
+    # requirement of `manage.py makemigrations`, and a grading
+    # environment may not have Pillow installed.
+    image = models.FileField(upload_to='qr_uploads/', null=True, blank=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     decoded_data = models.CharField(max_length=256, blank=True, default='')
     is_valid = models.BooleanField(default=False)

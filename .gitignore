@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+/attendancechimp/media/
+
+# Generated migrations.  The autograder runs `makemigrations` itself, so the
+# generated 0001_initial.py etc. are not submitted -- but the migrations
+# package's __init__.py MUST stay, or `makemigrations` silently skips the app
+# ("No changes detected") and never creates its tables.
+attendancechimp/app/migrations/*
+!attendancechimp/app/migrations/__init__.py
+
+# macOS
+.DS_Store

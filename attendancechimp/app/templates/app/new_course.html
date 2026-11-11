@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>New Course - AttendanceChimp</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 3em 1em;
+        }
+        .container {
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        .field {
+            margin-bottom: 1em;
+            text-align: left;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.25em;
+        }
+        input[type="text"],
+        input[type="time"] {
+            width: 100%;
+            padding: 0.4em;
+            box-sizing: border-box;
+        }
+        .days label {
+            display: inline;
+            margin-right: 0.75em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>New Course</h1>
+
+        <form action="/app/createCourse" method="post">
+            {% csrf_token %}
+
+            <div class="field">
+                <label for="course-name">Course name</label>
+                <input type="text" id="course-name" name="course-name" required>
+            </div>
+
+            <div class="field">
+                <label for="start-time">Start time</label>
+                <input type="time" id="start-time" name="start-time">
+            </div>
+
+            <div class="field">
+                <label for="end-time">End time</label>
+                <input type="time" id="end-time" name="end-time">
+            </div>
+
+            <div class="field days">
+                <label>Meeting days</label>
+                <input type="checkbox" id="day-mon" name="day-mon">
+                <label for="day-mon">Mon</label>
+                <input type="checkbox" id="day-tue" name="day-tue">
+                <label for="day-tue">Tue</label>
+                <input type="checkbox" id="day-wed" name="day-wed">
+                <label for="day-wed">Wed</label>
+                <input type="checkbox" id="day-thu" name="day-thu">
+                <label for="day-thu">Thu</label>
+                <input type="checkbox" id="day-fri" name="day-fri">
+                <label for="day-fri">Fri</label>
+            </div>
+
+            <button type="submit">Create Course</button>
+        </form>
+
+        <p><a href="/app/">Back to home</a></p>
+    </div>
+</body>
+</html>

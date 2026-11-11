@@ -65,4 +65,8 @@ LOGIN_REDIRECT_URL = "/app/"
 LOGOUT_REDIRECT_URL = "/app/"
 
 STATIC_URL = "static/"
+
+# Where uploaded QR-code photographs are written.
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

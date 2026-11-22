@@ -42,7 +42,7 @@
                 {% if courses %}
                     <select id="choice" name="choice" required>
                         {% for course in courses %}
-                            <option value="{{ course.name }}">{{ course.name }}</option>
+                            <option value="{{ course.course }}">{{ course.course }} – {{ course.name }}</option>
                         {% endfor %}
                     </select>
                 {% else %}

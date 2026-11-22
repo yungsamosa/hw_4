@@ -42,6 +42,12 @@
             {% csrf_token %}
 
             <div class="field">
+                <label for="course">Course number</label>
+                <input type="text" id="course" name="course"
+                       placeholder="DATA13600" required>
+            </div>
+
+            <div class="field">
                 <label for="course-name">Course name</label>
                 <input type="text" id="course-name" name="course-name" required>
             </div>

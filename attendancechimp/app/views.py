@@ -20,6 +20,7 @@ from .models import (
     Lecture,
     QRCodeUpload,
     StudentProfile,
+    getUploadsForCourse,
 )
 
 CDT = ZoneInfo("America/Chicago")
@@ -143,6 +144,7 @@ def sum_view(request: HttpRequest) -> HttpResponse:
 #   /app/createLecture       POST   instructor   else 401
 #   /app/createQRCodeUpload  POST   student      else 401
 #   /app/dumpUploads         GET    instructor   else 401
+#   /app/getUploads          GET    instructor   else 401
 #
 # Every endpoint checks the role *before* the HTTP method, so an
 # unauthorized caller always sees 401 rather than 405.
@@ -256,7 +258,17 @@ def createCourse(request: HttpRequest) -> HttpResponse:
             content_type="text/plain",
         )
 
+    # The course number ("DATA13600") is what identifies a course to
+    # /app/getUploads.  A caller that sends only a course name — the HW5 form
+    # — gets the name used as the number too.
+    number = (
+        request.POST.get("course")
+        or request.POST.get("course-number")
+        or name
+    ).strip()
+
     fields = {
+        "course": number,
         "instructor": request.user,
         "start_time": _parse_time(request.POST.get("start-time", "")),
         "end_time": _parse_time(request.POST.get("end-time", "")),
@@ -270,11 +282,24 @@ def createCourse(request: HttpRequest) -> HttpResponse:
     # Course.name is unique.  Re-posting the same name updates the existing
     # row instead of raising IntegrityError, so a repeated request is a 200
     # rather than a 500.
-    course, created = Course.objects.update_or_create(name=name, defaults=fields)
+    # Course.name and Course.course are both unique, so re-posting either one
+    # updates the existing row rather than raising IntegrityError.
+    existing = (
+        Course.objects.filter(course=number).first()
+        or Course.objects.filter(name=name).first()
+    )
+    if existing is None:
+        course = Course.objects.create(name=name, **fields)
+        created = True
+    else:
+        for field, value in {"name": name, **fields}.items():
+            setattr(existing, field, value)
+        existing.save()
+        course, created = existing, False
 
     verb = "Created" if created else "Updated"
     return HttpResponse(
-        f"{verb} course {course.name}", status=200, content_type="text/plain"
+        f"{verb} course {course.course}", status=200, content_type="text/plain"
     )
 
 
@@ -300,10 +325,13 @@ def createLecture(request: HttpRequest) -> HttpResponse:
             content_type="text/plain",
         )
 
-    # Course names are unique, so the name identifies the course outright.
-    # Prefer one of the caller's own courses if a stale duplicate ever exists.
+    # `choice` may be a course number ("DATA13600") or a course name; both
+    # columns are unique.  Prefer one of the caller's own courses if a stale
+    # duplicate ever exists.
     course = (
-        Course.objects.filter(name=choice, instructor=request.user).first()
+        Course.objects.filter(course=choice, instructor=request.user).first()
+        or Course.objects.filter(name=choice, instructor=request.user).first()
+        or Course.objects.filter(course=choice).first()
         or Course.objects.filter(name=choice).first()
     )
     if course is None:
@@ -327,6 +355,61 @@ def createLecture(request: HttpRequest) -> HttpResponse:
 # ---------------------------------------------------------------------------
 
 
+def _match_lecture(request: HttpRequest, upload_file) -> Lecture | None:
+    """Find the Lecture a QR-code upload belongs to.
+
+    Decoding the QR code out of the photograph would need an image/QR library
+    that this project does not depend on, so the lecture is identified from
+    what the request states instead, in order of how specific it is:
+
+      1. `lecture`  — a Lecture primary key
+      2. `qr_code_data` / `decoded_data` — the string encoded in the QR code
+      3. the uploaded file's name, if a lecture's QR string appears in it
+      4. `course` — the course number, which maps to its most recent lecture
+
+    Returns None when nothing matches; such an upload is recorded but will
+    never count as attendance, because getUploadsForCourse() walks
+    Upload → Lecture → Course.
+    """
+    lecture_pk = (request.POST.get("lecture") or "").strip()
+    if lecture_pk.isdigit():
+        lecture = Lecture.objects.filter(pk=int(lecture_pk)).first()
+        if lecture is not None:
+            return lecture
+
+    qr_data = (
+        request.POST.get("qr_code_data")
+        or request.POST.get("qr-code-data")
+        or request.POST.get("decoded_data")
+        or ""
+    ).strip()
+    if qr_data:
+        lecture = Lecture.objects.filter(qr_code_data=qr_data).first()
+        if lecture is not None:
+            return lecture
+
+    filename = getattr(upload_file, "name", "") or ""
+    if filename:
+        for lecture in Lecture.objects.all():
+            if lecture.qr_code_data and lecture.qr_code_data in filename:
+                return lecture
+
+    course_key = (request.POST.get("course") or request.POST.get("choice") or "").strip()
+    if course_key:
+        return (
+            Lecture.objects
+            .filter(course__course=course_key)
+            .order_by("-date", "-pk")
+            .first()
+            or Lecture.objects
+            .filter(course__name=course_key)
+            .order_by("-date", "-pk")
+            .first()
+        )
+
+    return None
+
+
 @csrf_exempt
 def createQRCodeUpload(request: HttpRequest) -> HttpResponse:
     """Record a student's uploaded QR-code photograph.
@@ -343,13 +426,19 @@ def createQRCodeUpload(request: HttpRequest) -> HttpResponse:
 
     # The row is recorded even when no file came through, so that an upload
     # attempt always shows up in /app/dumpUploads.
+    image = request.FILES.get("imageUpload")
+    lecture = _match_lecture(request, image)
+
     upload = QRCodeUpload.objects.create(
         student=request.user,
-        image=request.FILES.get("imageUpload"),
+        lecture=lecture,
+        image=image,
+        decoded_data=lecture.qr_code_data if lecture else "",
     )
 
+    where = f" for lecture {lecture.pk}" if lecture else " (no lecture matched)"
     return HttpResponse(
-        f"Recorded upload {upload.pk} for {request.user.username}",
+        f"Recorded upload {upload.pk} for {request.user.username}{where}",
         status=200,
         content_type="text/plain",
     )
@@ -358,6 +447,16 @@ def createQRCodeUpload(request: HttpRequest) -> HttpResponse:
 # ---------------------------------------------------------------------------
 # /app/dumpUploads  —  GET, instructor only
 # ---------------------------------------------------------------------------
+
+
+def _upload_time(upload: QRCodeUpload) -> str:
+    """Format an upload's timestamp as local "YYYY-MM-DD HH:MM:SS"."""
+    stamp = upload.uploaded_at
+    if stamp is None:
+        return ""
+    if timezone.is_aware(stamp):
+        stamp = timezone.localtime(stamp)
+    return stamp.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def dumpUploads(request: HttpRequest) -> HttpResponse:
@@ -374,14 +473,47 @@ def dumpUploads(request: HttpRequest) -> HttpResponse:
         .order_by("uploaded_at", "pk")
     )
     for upload in uploads:
-        stamp = upload.uploaded_at
-        if stamp is not None and timezone.is_aware(stamp):
-            stamp = timezone.localtime(stamp)
         data.append(
             {
                 "username": upload.student.username,
-                "upload_time": stamp.strftime("%Y-%m-%d %H:%M:%S") if stamp else "",
+                "upload_time": _upload_time(upload),
             }
         )
+
+    return JsonResponse(data, safe=False)
+
+
+# ---------------------------------------------------------------------------
+# /app/getUploads  —  GET, instructor only
+# ---------------------------------------------------------------------------
+
+
+def getUploads(request: HttpRequest) -> HttpResponse:
+    """Return the *valid* uploads for one course as JSON.
+
+        GET /app/getUploads?course=DATA13600
+        -> [{"username": "alice", "upload_time": "2024-11-05 10:30:00"}, ...]
+
+    "Valid" is decided by models.getUploadsForCourse(): the upload has to
+    land on a day the course meets, inside its start/end times.  A course
+    number that matches no course is not an error — it just has no uploads.
+    """
+    if not _is_instructor(request.user):
+        return _unauthorized("Unauthorized: you must be logged in as an instructor")
+
+    if request.method != "GET":
+        return _wrong_method("GET")
+
+    course = request.GET.get("course")
+    if course is None or not course.strip():
+        return JsonResponse({"error": "Missing course parameter"}, status=400)
+
+    data = [
+        {
+            "username": upload.student.username,
+            "upload_time": _upload_time(upload),
+        }
+        for upload in getUploadsForCourse(course.strip())
+    ]
 
     return JsonResponse(data, safe=False)
